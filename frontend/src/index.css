@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 6%; /* Deep carbon slate #080c14 */
+    --foreground: 210 40% 98%;
+    
+    --card: 222 47% 9%; /* Sleek dark card #0c1220 */
+    --card-foreground: 210 40% 98%;
+    
+    --popover: 222 47% 9%;
+    --popover-foreground: 215 20.2% 65.1%;
+    
+    --primary: 158 75% 42%; /* Vibrant emerald #10b981 */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 217 33% 15%;
+    --secondary-foreground: 210 40% 98%;
+    
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 65%;
+    
+    --accent: 217 33% 18%;
+    --accent-foreground: 210 40% 98%;
+    
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 11%;
+    
+    --border: 217 33% 17%; /* Hairline slate border #1e293b */
+    --input: 217 33% 17%;
+    --ring: 158 75% 42%;
+    
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-[#080c14] text-slate-100 font-sans antialiased selection:bg-emerald-500/20 selection:text-emerald-300;
+  }
+  
+  /* Custom scrollbar for premium command-center feel */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+  }
+}
+
+/* Utilities */
+.glass-panel {
+  @apply bg-[#0c1220]/90 backdrop-blur-md border border-slate-800/80 shadow-2xl;
+}
+
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}

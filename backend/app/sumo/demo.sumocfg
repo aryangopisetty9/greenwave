@@ -1,0 +1,14 @@
+<configuration>
+    <input>
+        <net-file value="demo.net.xml"/>
+        <route-files value="demo.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="3600"/>
+    </time>
+    <output>
+        <summary-output value="demo.summary.xml"/>
+        <tripinfo-output value="demo.tripinfo.xml"/>
+    </output>
+</configuration>

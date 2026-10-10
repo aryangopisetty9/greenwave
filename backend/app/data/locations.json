@@ -1,0 +1,53 @@
+{
+  "states": [
+    { "id": 1, "name": "Maharashtra" },
+    { "id": 2, "name": "Karnataka" },
+    { "id": 3, "name": "Delhi" },
+    { "id": 4, "name": "Tamil Nadu" },
+    { "id": 5, "name": "Telangana" }
+  ],
+  "districts": [
+    { "id": 1, "state_id": 1, "name": "Mumbai" },
+    { "id": 2, "state_id": 1, "name": "Pune" },
+    { "id": 3, "state_id": 2, "name": "Bengaluru Urban" },
+    { "id": 4, "state_id": 2, "name": "Mysuru" },
+    { "id": 5, "state_id": 3, "name": "New Delhi" },
+    { "id": 6, "state_id": 4, "name": "Chennai" },
+    { "id": 7, "state_id": 5, "name": "Hyderabad" }
+  ],
+  "corridors": [
+    {
+      "id": 1,
+      "district_id": 3,
+      "name": "Koramangala 100ft Road (Sony World to Wipro Park)",
+      "intersections": [
+        { "id": 1, "name": "Sony World Signal", "lat": 12.9345, "lon": 77.6255 },
+        { "id": 2, "name": "Oasis Mall Signal", "lat": 12.9360, "lon": 77.6270 },
+        { "id": 3, "name": "Maharaja Signal", "lat": 12.9375, "lon": 77.6285 },
+        { "id": 4, "name": "Wipro Park Signal", "lat": 12.9390, "lon": 77.6300 }
+      ]
+    },
+    {
+      "id": 2,
+      "district_id": 1,
+      "name": "Western Express Highway (Bandra to Santacruz)",
+      "intersections": [
+        { "id": 5, "name": "Kalanagar Junction", "lat": 19.0558, "lon": 72.8427 },
+        { "id": 6, "name": "BKC Connector", "lat": 19.0660, "lon": 72.8480 },
+        { "id": 7, "name": "Vakola Flyover", "lat": 19.0805, "lon": 72.8533 },
+        { "id": 8, "name": "Santacruz Signal", "lat": 19.0870, "lon": 72.8550 }
+      ]
+    },
+    {
+      "id": 3,
+      "district_id": 3,
+      "name": "Indiranagar 100ft Road",
+      "intersections": [
+        { "id": 9, "name": "Domlur Flyover", "lat": 12.9585, "lon": 77.6405 },
+        { "id": 10, "name": "Doopanahalli Signal", "lat": 12.9645, "lon": 77.6415 },
+        { "id": 11, "name": "12th Main Junction", "lat": 12.9715, "lon": 77.6410 },
+        { "id": 12, "name": "Old Madras Rd Junction", "lat": 12.9785, "lon": 77.6408 }
+      ]
+    }
+  ]
+}
