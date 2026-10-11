@@ -299,7 +299,22 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         db.add(new_scope)
         db.commit()
         
-        return new_user
+        user_id = new_user.id
+        d_name = district.name if (district and isinstance(getattr(district, "name", None), str)) else None
+        s_name = district.state.name if (district and hasattr(district, "state") and district.state and isinstance(getattr(district.state, "name", None), str)) else None
+        
+        return UserResponse(
+            id=user_id,
+            email=email_clean,
+            full_name=signup_data.full_name,
+            role=UserRole.DISTRICT_OFFICER,
+            is_active=True,
+            district_id=signup_data.district_id,
+            state_id=signup_data.state_id,
+            district_name=d_name,
+            state_name=s_name,
+            badge_number=f"IPS-{user_id:04d}-TRF"
+        )
     except HTTPException:
         raise
     except Exception as e:
