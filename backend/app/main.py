@@ -1,7 +1,8 @@
+import os
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.core.config import settings
 from app.db.database import engine, get_db, SessionLocal
@@ -52,6 +53,34 @@ def log_sanitized_db_error(context: str, e: Exception) -> None:
         f"[SQLSTATE={sqlstate}, table={table_name or 'N/A'}, column={column_name or 'N/A'}, detail={primary_msg}]"
     )
 
+def find_sqlite_db() -> Optional[str]:
+    """Locate bundled greenwave.db in development or serverless environments."""
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.dirname(curr_dir)
+    root_dir = os.path.dirname(backend_dir)
+    
+    candidates = [
+        os.path.join(backend_dir, "greenwave.db"),
+        os.path.join(root_dir, "backend", "greenwave.db"),
+        os.path.join(os.getcwd(), "greenwave.db"),
+        os.path.join(os.getcwd(), "backend", "greenwave.db"),
+        os.path.abspath("greenwave.db"),
+        os.path.abspath("backend/greenwave.db"),
+    ]
+    for path in candidates:
+        if os.path.exists(path) and os.path.getsize(path) > 10000:
+            return path
+
+    # Search directory trees
+    for search_root in [os.getcwd(), backend_dir, "/var/task"]:
+        if os.path.exists(search_root):
+            for root, _, files in os.walk(search_root):
+                if "greenwave.db" in files:
+                    full_p = os.path.join(root, "greenwave.db")
+                    if os.path.getsize(full_p) > 10000:
+                        return full_p
+    return None
+
 def ensure_database_schema(db_engine):
     """Ensure required database schema and initial data exist in PostgreSQL."""
     if not settings.SQLALCHEMY_DATABASE_URI or settings.DATABASE_CONFIG_ERROR:
@@ -66,12 +95,15 @@ def ensure_database_schema(db_engine):
             inspector = inspect(conn)
             existing_tables = set(inspector.get_table_names())
             if "users" in existing_tables and "states" in existing_tables:
-                return
+                user_count = conn.execute(text("SELECT count(*) FROM users")).scalar()
+                state_count = conn.execute(text("SELECT count(*) FROM states")).scalar()
+                if user_count and user_count > 0 and state_count and state_count > 0:
+                    return
     except Exception as e:
         log_sanitized_db_error("schema inspection", e)
         return
 
-    # Database is empty. Attempt safe, synchronized schema creation and migration.
+    # Database is empty or unpopulated. Attempt safe, synchronized migration.
     try:
         with db_engine.connect() as conn:
             is_postgres = "postgres" in settings.SQLALCHEMY_DATABASE_URI.lower()
@@ -87,23 +119,27 @@ def ensure_database_schema(db_engine):
 
             try:
                 inspector = inspect(conn)
-                if "users" in set(inspector.get_table_names()):
-                    return
+                tables = set(inspector.get_table_names())
+                has_users = "users" in tables
+                if has_users:
+                    u_cnt = conn.execute(text("SELECT count(*) FROM users")).scalar()
+                    s_cnt = conn.execute(text("SELECT count(*) FROM states")).scalar() if "states" in tables else 0
+                    if u_cnt and u_cnt > 0 and s_cnt and s_cnt > 0:
+                        return
 
                 logger.info("Initializing schema and migrating data to PostgreSQL...")
                 from app.models.domain import Base
                 Base.metadata.create_all(bind=db_engine)
 
                 # Attempt data migration from bundled greenwave.db
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                sqlite_path = os.path.join(base_dir, "greenwave.db")
-                if not os.path.exists(sqlite_path):
-                    sqlite_path = os.path.join(os.path.dirname(base_dir), "backend", "greenwave.db")
-
-                if os.path.exists(sqlite_path):
+                sqlite_path = find_sqlite_db()
+                if sqlite_path:
+                    logger.info(f"Found source SQLite database at {sqlite_path}, migrating...")
                     from app.scripts.migrate_sqlite_to_postgres import migrate_data
                     report = migrate_data(source_path=sqlite_path, target_url=settings.SQLALCHEMY_DATABASE_URI)
                     logger.info(f"Auto-migration completed: success={report.get('success', False)}")
+                else:
+                    logger.warning("Could not find greenwave.db for auto-migration.")
             finally:
                 if is_postgres and lock_acquired:
                     try:
@@ -152,6 +188,7 @@ class LocationDistrictResponse(BaseModel):
 def health_check():
     db_status = "unconfigured"
     schema_status = "unconfigured"
+    rows = {}
     if settings.SQLALCHEMY_DATABASE_URI and not settings.DATABASE_CONFIG_ERROR:
         from sqlalchemy import inspect, text
         try:
@@ -160,14 +197,21 @@ def health_check():
                 db_status = "connected"
                 inspector = inspect(conn)
                 tables = inspector.get_table_names()
-                schema_status = "ready" if "users" in tables else "empty_schema"
+                if "users" in tables and "states" in tables:
+                    u_cnt = conn.execute(text("SELECT count(*) FROM users")).scalar()
+                    s_cnt = conn.execute(text("SELECT count(*) FROM states")).scalar()
+                    schema_status = "ready" if (u_cnt and u_cnt > 0) else "empty_tables"
+                    rows = {"users": u_cnt, "states": s_cnt}
+                else:
+                    schema_status = "missing_tables"
         except Exception as e:
             db_status = "error"
             schema_status = f"error: {type(e).__name__}"
     return {
         "status": "healthy",
         "database": db_status,
-        "schema": schema_status
+        "schema": schema_status,
+        "rows": rows
     }
 
 @app.post(f"{settings.API_V1_STR}/auth/login", response_model=Token)
