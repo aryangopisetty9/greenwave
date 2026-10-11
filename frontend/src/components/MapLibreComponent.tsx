@@ -1,9 +1,9 @@
-import { useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { AlertCircle, Layers, Shield, Zap } from 'lucide-react';
+import { AlertCircle, Shield, Zap, RefreshCw, Crosshair, CheckCircle2 } from 'lucide-react';
 
-interface SignalNode {
+export interface SignalNode {
   id: number;
   name: string;
   corridor?: string;
@@ -21,9 +21,25 @@ interface SignalNode {
   is_verified?: boolean;
 }
 
+export interface CorridorNode {
+  id: number;
+  name: string;
+  district_id?: number;
+  state_id?: number;
+  intersections?: Array<{
+    id: number;
+    name: string;
+    lat: number;
+    lon: number;
+    sequence_order?: number;
+    distance_to_next_m?: number;
+  }>;
+}
+
 interface MapProps {
   mode?: 'live' | 'simulation';
-  selectedCorridor?: any;
+  corridors?: CorridorNode[];
+  selectedCorridor?: CorridorNode | null;
   intersections?: SignalNode[];
   vehicles?: Array<{ id: string; lon: number; lat: number }>;
   districtName?: string;
@@ -31,9 +47,12 @@ interface MapProps {
   onSelectSignal?: (signal: SignalNode) => void;
 }
 
+type TileMode = 'dark' | 'street' | 'satellite';
+
 export default function MapLibreComponent({
   mode: _mode,
-  selectedCorridor: _selectedCorridor,
+  corridors = [],
+  selectedCorridor,
   intersections = [],
   vehicles,
   districtName = 'District',
@@ -44,8 +63,9 @@ export default function MapLibreComponent({
   const map = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<{ [key: number]: { marker: maplibregl.Marker; el: HTMLElement } }>({});
   const [error, setError] = useState<string | null>(null);
-  const [tileMode, setTileMode] = useState<'dark' | 'satellite'>('dark');
+  const [tileMode, setTileMode] = useState<TileMode>('dark');
   const [activeSignal, setActiveSignal] = useState<SignalNode | null>(null);
+  const [isStyleLoaded, setIsStyleLoaded] = useState(false);
 
   // Live ticking countdown state
   const [liveSignals, setLiveSignals] = useState<SignalNode[]>([]);
@@ -57,10 +77,10 @@ export default function MapLibreComponent({
         intersections.map((int, idx) => ({
           ...int,
           signal_status: int.signal_status || (idx % 2 === 0 ? 'green' : 'red'),
-          time_remaining: int.time_remaining || (20 + (idx * 9) % 40),
+          time_remaining: int.time_remaining || (20 + ((idx * 9) % 40)),
           cycle_length: int.cycle_length || 90,
           phase: int.phase || (idx % 2 === 0 ? 'North-South Green' : 'East-West Green'),
-          live_queue: int.live_queue || (6 + (idx * 3) % 15),
+          live_queue: int.live_queue || (6 + ((idx * 3) % 15)),
           speed_kmh: int.speed_kmh || (36 + (idx % 4) * 2.5),
         }))
       );
@@ -106,51 +126,86 @@ export default function MapLibreComponent({
     return () => clearInterval(timer);
   }, []);
 
-  // Compute district centroid
+  // Compute district centroid (Default: Guntur, Andhra Pradesh)
   const districtCenter = useMemo((): [number, number] => {
     if (intersections && intersections.length > 0) {
       const avgLon = intersections.reduce((sum, i) => sum + i.lon, 0) / intersections.length;
       const avgLat = intersections.reduce((sum, i) => sum + i.lat, 0) / intersections.length;
       return [avgLon, avgLat];
     }
-    // Guntur fallback if no points
+    // Guntur, Andhra Pradesh verified centroid
     return [80.4365, 16.3067];
   }, [intersections]);
 
-  // Initialize Map
+  // Recenter / Fit bounds helper
+  const fitDistrictBounds = useCallback(() => {
+    if (!map.current) return;
+    if (liveSignals.length > 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      liveSignals.forEach((sig) => {
+        bounds.extend([sig.lon, sig.lat]);
+      });
+      map.current.fitBounds(bounds, { padding: 60, maxZoom: 15.5, duration: 900 });
+    } else {
+      map.current.flyTo({ center: [80.4365, 16.3067], zoom: 13.5, duration: 900 });
+    }
+  }, [liveSignals]);
+
+  // Initialize Map with public OpenStreetMap & ArcGIS raster sources
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
     try {
-      const tileSourceUrl =
-        tileMode === 'dark'
-          ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-          : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-
-      map.current = new maplibregl.Map({
+      const mapInstance = new maplibregl.Map({
         container: mapContainer.current,
         style: {
           version: 8,
           sources: {
-            'basemap': {
+            'osm-tiles': {
               type: 'raster',
               tiles: [
-                tileSourceUrl,
-                tileSourceUrl.replace('a.basemaps', 'b.basemaps'),
-                tileSourceUrl.replace('a.basemaps', 'c.basemaps'),
-                tileSourceUrl.replace('a.basemaps', 'd.basemaps'),
+                'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
               ],
               tileSize: 256,
-              attribution: '&copy; CartoDB &copy; OpenStreetMap',
+              attribution:
+                '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+            },
+            'satellite-tiles': {
+              type: 'raster',
+              tiles: [
+                'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+              ],
+              tileSize: 256,
+              attribution: 'Esri, Maxar, Earthstar Geographics',
             },
           },
           layers: [
             {
-              id: 'basemap-layer',
+              id: 'osm-layer',
               type: 'raster',
-              source: 'basemap',
+              source: 'osm-tiles',
               minzoom: 0,
               maxzoom: 19,
+              layout: {
+                visibility: 'visible',
+              },
+              paint: {
+                'raster-brightness-max': 0.7,
+                'raster-contrast': 0.25,
+                'raster-saturation': -0.85,
+              },
+            },
+            {
+              id: 'satellite-layer',
+              type: 'raster',
+              source: 'satellite-tiles',
+              minzoom: 0,
+              maxzoom: 19,
+              layout: {
+                visibility: 'none',
+              },
             },
           ],
         },
@@ -159,17 +214,51 @@ export default function MapLibreComponent({
         attributionControl: false,
       });
 
-      map.current.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
-      map.current.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+      mapInstance.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
+      mapInstance.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
-      map.current.on('load', () => {
-        // Add vehicles source for simulation mode
-        map.current?.addSource('vehicles', {
+      mapInstance.on('load', () => {
+        setIsStyleLoaded(true);
+
+        // Add corridors GeoJSON source
+        mapInstance.addSource('corridors', {
           type: 'geojson',
           data: { type: 'FeatureCollection', features: [] },
         });
 
-        map.current?.addLayer({
+        // Corridors glow halo
+        mapInstance.addLayer({
+          id: 'corridors-glow',
+          type: 'line',
+          source: 'corridors',
+          paint: {
+            'line-color': '#06b6d4',
+            'line-width': 7,
+            'line-opacity': 0.35,
+            'line-blur': 3,
+          },
+        });
+
+        // Corridors dynamic line
+        mapInstance.addLayer({
+          id: 'corridors-line',
+          type: 'line',
+          source: 'corridors',
+          paint: {
+            'line-color': ['case', ['boolean', ['get', 'isSelected'], false], '#10b981', '#38bdf8'],
+            'line-width': 3,
+            'line-opacity': 0.9,
+            'line-dasharray': [3, 1],
+          },
+        });
+
+        // Add vehicles source for simulation mode
+        mapInstance.addSource('vehicles', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        });
+
+        mapInstance.addLayer({
           id: 'vehicles-layer',
           type: 'circle',
           source: 'vehicles',
@@ -180,7 +269,15 @@ export default function MapLibreComponent({
             'circle-stroke-color': '#ffffff',
           },
         });
+
+        mapInstance.resize();
       });
+
+      mapInstance.on('error', (e) => {
+        console.warn('MapLibre event:', e);
+      });
+
+      map.current = mapInstance;
     } catch (err: any) {
       setError(err.message || 'Failed to initialize district map');
     }
@@ -189,40 +286,89 @@ export default function MapLibreComponent({
       if (map.current) {
         map.current.remove();
         map.current = null;
+        setIsStyleLoaded(false);
       }
     };
   }, []);
 
-  // Handle tile switch
+  // Handle ResizeObserver for dynamic layout / sidebar changes
   useEffect(() => {
-    if (!map.current || !map.current.getSource('basemap')) return;
+    if (!mapContainer.current) return;
+    const observer = new ResizeObserver(() => {
+      map.current?.resize();
+    });
+    observer.observe(mapContainer.current);
+    return () => observer.disconnect();
+  }, []);
 
-    const tileSourceUrl =
-      tileMode === 'dark'
-        ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-        : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  // Handle tile switch (Dark OSM / Street OSM / Satellite)
+  useEffect(() => {
+    if (!map.current || !isStyleLoaded) return;
 
-    const source = map.current.getSource('basemap') as any;
-    if (source && source.tiles) {
-      source.tiles = [
-        tileSourceUrl,
-        tileSourceUrl.replace('a.basemaps', 'b.basemaps'),
-        tileSourceUrl.replace('a.basemaps', 'c.basemaps'),
-        tileSourceUrl.replace('a.basemaps', 'd.basemaps'),
-      ];
-      // Trigger layer reload
-      if (map.current.getLayer('basemap-layer')) {
-        map.current.removeLayer('basemap-layer');
-        map.current.addLayer({
-          id: 'basemap-layer',
-          type: 'raster',
-          source: 'basemap',
-          minzoom: 0,
-          maxzoom: 19,
-        });
+    try {
+      if (tileMode === 'satellite') {
+        map.current.setLayoutProperty('osm-layer', 'visibility', 'none');
+        map.current.setLayoutProperty('satellite-layer', 'visibility', 'visible');
+      } else {
+        map.current.setLayoutProperty('osm-layer', 'visibility', 'visible');
+        map.current.setLayoutProperty('satellite-layer', 'visibility', 'none');
+
+        if (tileMode === 'dark') {
+          map.current.setPaintProperty('osm-layer', 'raster-brightness-max', 0.7);
+          map.current.setPaintProperty('osm-layer', 'raster-contrast', 0.25);
+          map.current.setPaintProperty('osm-layer', 'raster-saturation', -0.85);
+        } else {
+          // Standard street map
+          map.current.setPaintProperty('osm-layer', 'raster-brightness-max', 1.0);
+          map.current.setPaintProperty('osm-layer', 'raster-contrast', 0.0);
+          map.current.setPaintProperty('osm-layer', 'raster-saturation', 0.0);
+        }
       }
+    } catch (err) {
+      console.warn('Error changing tile style properties:', err);
     }
-  }, [tileMode]);
+  }, [tileMode, isStyleLoaded]);
+
+  // Render Corridor Routes on the Map
+  useEffect(() => {
+    if (!map.current || !isStyleLoaded || !map.current.getSource('corridors')) return;
+
+    const source = map.current.getSource('corridors') as maplibregl.GeoJSONSource;
+    if (corridors && corridors.length > 0) {
+      const features: any[] = [];
+
+      corridors.forEach((c) => {
+        const intList = c.intersections || [];
+        if (intList.length >= 2) {
+          const sorted = [...intList].sort(
+            (a, b) => (a.sequence_order || 0) - (b.sequence_order || 0)
+          );
+          const coords = sorted.map((item) => [item.lon, item.lat]);
+          const isSelected = selectedCorridor ? selectedCorridor.id === c.id : false;
+
+          features.push({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: coords,
+            },
+            properties: {
+              id: c.id,
+              name: c.name,
+              isSelected,
+            },
+          });
+        }
+      });
+
+      source.setData({
+        type: 'FeatureCollection',
+        features,
+      });
+    } else {
+      source.setData({ type: 'FeatureCollection', features: [] });
+    }
+  }, [corridors, selectedCorridor, isStyleLoaded]);
 
   // Fit map to district nodes when signals load
   useEffect(() => {
@@ -233,7 +379,7 @@ export default function MapLibreComponent({
       bounds.extend([sig.lon, sig.lat]);
     });
 
-    map.current.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 1200 });
+    map.current.fitBounds(bounds, { padding: 60, maxZoom: 15.5, duration: 1000 });
   }, [liveSignals.length]);
 
   // Render & Update Custom Signal DOM Markers
@@ -289,14 +435,14 @@ export default function MapLibreComponent({
           <!-- Live pulse aura -->
           <div style="
             position: absolute;
-            width: 38px;
-            height: 38px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             background: ${statusGlow};
             animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
             top: -6px;
             z-index: 1;
-            opacity: 0.6;
+            opacity: 0.55;
           "></div>
 
           <!-- Signal badge -->
@@ -328,8 +474,8 @@ export default function MapLibreComponent({
             position: relative;
             z-index: 2;
             margin-top: 3px;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(51, 65, 85, 0.8);
+            background: rgba(15, 23, 42, 0.92);
+            border: 1px solid rgba(51, 65, 85, 0.85);
             color: #cbd5e1;
             font-size: 9px;
             font-weight: 600;
@@ -355,11 +501,11 @@ export default function MapLibreComponent({
         delete markersRef.current[id];
       }
     });
-  }, [liveSignals]);
+  }, [liveSignals, onSelectSignal]);
 
   // Update simulation vehicles
   useEffect(() => {
-    if (!map.current || !map.current.getSource('vehicles')) return;
+    if (!map.current || !isStyleLoaded || !map.current.getSource('vehicles')) return;
 
     const source = map.current.getSource('vehicles') as maplibregl.GeoJSONSource;
     if (vehicles && vehicles.length > 0) {
@@ -374,7 +520,7 @@ export default function MapLibreComponent({
     } else {
       source.setData({ type: 'FeatureCollection', features: [] });
     }
-  }, [vehicles]);
+  }, [vehicles, isStyleLoaded]);
 
   if (error) {
     return (
@@ -382,6 +528,15 @@ export default function MapLibreComponent({
         <AlertCircle size={32} className="mb-2" />
         <p className="font-semibold text-sm">District Map Offline</p>
         <p className="text-xs mt-1 text-slate-400">{error}</p>
+        <button
+          onClick={() => {
+            setError(null);
+            window.location.reload();
+          }}
+          className="mt-4 px-3 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-xs text-white border border-slate-700 flex items-center gap-1.5"
+        >
+          <RefreshCw size={12} /> Retry Connection
+        </button>
       </div>
     );
   }
@@ -391,7 +546,7 @@ export default function MapLibreComponent({
       <div ref={mapContainer} className="absolute inset-0" />
 
       {/* Map Control Overlays */}
-      <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+      <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2">
         {/* District Jurisdiction Tag */}
         <div className="flex items-center gap-2 bg-[#0c1322]/90 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-slate-700/80 shadow-xl">
           <Shield size={14} className="text-cyan-400" />
@@ -405,14 +560,48 @@ export default function MapLibreComponent({
           </div>
         </div>
 
-        {/* Map Imagery Toggle */}
+        {/* 3-Mode Map Imagery Toggle */}
+        <div className="flex items-center bg-[#0c1322]/90 backdrop-blur-md rounded-xl border border-slate-700/80 p-0.5 shadow-xl text-xs">
+          <button
+            onClick={() => setTileMode('dark')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+              tileMode === 'dark'
+                ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Tactical
+          </button>
+          <button
+            onClick={() => setTileMode('street')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+              tileMode === 'street'
+                ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Street
+          </button>
+          <button
+            onClick={() => setTileMode('satellite')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+              tileMode === 'satellite'
+                ? 'bg-indigo-500/20 text-indigo-300 font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Satellite
+          </button>
+        </div>
+
+        {/* Re-center / Fit Bounds Button */}
         <button
-          onClick={() => setTileMode((prev) => (prev === 'dark' ? 'satellite' : 'dark'))}
+          onClick={fitDistrictBounds}
           className="flex items-center gap-1.5 bg-[#0c1322]/90 backdrop-blur-md hover:bg-slate-800 text-slate-300 hover:text-white px-3 py-1.5 rounded-xl border border-slate-700/80 shadow-xl text-xs font-medium transition-all"
-          title="Toggle Satellite / Tactical Map"
+          title="Fit view to district signals"
         >
-          <Layers size={13} className="text-emerald-400" />
-          <span>{tileMode === 'dark' ? 'Satellite View' : 'Tactical Dark'}</span>
+          <Crosshair size={13} className="text-emerald-400" />
+          <span>Center District</span>
         </button>
       </div>
 
@@ -438,9 +627,16 @@ export default function MapLibreComponent({
         <div className="absolute top-4 right-4 z-20 w-80 bg-[#0c1322]/95 backdrop-blur-xl border border-slate-700/90 rounded-2xl p-4 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="flex justify-between items-start mb-3">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
-                Signal Controller #{activeSignal.id}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                  Signal Controller #{activeSignal.id}
+                </span>
+                {activeSignal.is_verified && (
+                  <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-semibold flex items-center gap-1 border border-emerald-500/30">
+                    <CheckCircle2 size={10} /> Verified
+                  </span>
+                )}
+              </div>
               <h3 className="text-sm font-bold text-white leading-tight mt-0.5">
                 {activeSignal.name}
               </h3>
@@ -448,7 +644,7 @@ export default function MapLibreComponent({
             </div>
             <button
               onClick={() => setActiveSignal(null)}
-              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
             >
               ✕
             </button>
@@ -500,12 +696,12 @@ export default function MapLibreComponent({
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Action */}
             <div className="pt-1 flex gap-2">
               <button
                 onClick={() => {
                   alert(
-                    `Emergency Green Wave Clearance dispatched for ${activeSignal.name}! Next 60 seconds given full green priority.`
+                    `Emergency Green Wave Clearance dispatched for ${activeSignal.name}! Priority green wave engaged.`
                   );
                 }}
                 className="flex-1 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40 transition-all"

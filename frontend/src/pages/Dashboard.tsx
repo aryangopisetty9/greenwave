@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useOutletContext, Link } from 'react-router-dom';
 import { MapPin, GitBranch, Activity, Car, ShieldCheck, Compass, Radio, ExternalLink, Zap } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -6,6 +7,7 @@ import { apiFetch } from '../api/client';
 
 export default function Dashboard() {
   const { user } = useOutletContext<{ user: any }>();
+  const [selectedCorridorId, setSelectedCorridorId] = useState<number | null>(null);
 
   const { data: corridors } = useQuery({
     queryKey: ['corridors'],
@@ -32,7 +34,8 @@ export default function Dashboard() {
   const officerName = user?.full_name || 'Inspector Rajesh Varma, IPS';
   const badgeNumber = user?.badge_number || `IPS-${String(user?.id || 3).padStart(4, '0')}-TRF`;
 
-  const firstCorridor = corridors?.[0];
+  const activeCorridor =
+    corridors?.find((c: any) => c.id === selectedCorridorId) || corridors?.[0] || null;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12 font-sans">
@@ -187,7 +190,8 @@ export default function Dashboard() {
           <div className="flex-1 relative">
             <MapLibreComponent
               mode="live"
-              selectedCorridor={firstCorridor}
+              corridors={corridors}
+              selectedCorridor={activeCorridor}
               intersections={intersections}
               districtName={districtName}
               stateName={stateName}
@@ -209,24 +213,42 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
-              {corridors?.map((c: any) => (
-                <div
-                  key={c.id}
-                  className="flex justify-between items-center p-3 rounded-xl border border-slate-800 bg-slate-900/50 hover:border-slate-700 transition-all"
-                >
-                  <div className="overflow-hidden min-w-0 pr-2">
-                    <span className="text-xs text-white font-semibold block truncate">
-                      {c.name}
-                    </span>
-                    <span className="text-[11px] text-slate-400 block mt-0.5">
-                      {c.intersections?.length || 2} signals • Adaptive sync
+              {corridors?.map((c: any) => {
+                const isSelected = activeCorridor?.id === c.id;
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => setSelectedCorridorId(c.id)}
+                    className={`flex justify-between items-center p-3 rounded-xl border transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-emerald-500/60 bg-emerald-950/30 shadow-lg shadow-emerald-950/20'
+                        : 'border-slate-800 bg-slate-900/50 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="overflow-hidden min-w-0 pr-2">
+                      <span
+                        className={`text-xs font-semibold block truncate ${
+                          isSelected ? 'text-emerald-300' : 'text-white'
+                        }`}
+                      >
+                        {c.name}
+                      </span>
+                      <span className="text-[11px] text-slate-400 block mt-0.5">
+                        {c.intersections?.length || 2} signals • Adaptive sync
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
+                        isSelected
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                      }`}
+                    >
+                      {isSelected ? 'Focused' : 'Active'}
                     </span>
                   </div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 shrink-0">
-                    Active
-                  </span>
-                </div>
-              ))}
+                );
+              })}
               {(!corridors || corridors.length === 0) && (
                 <p className="text-xs text-slate-400 text-center py-6">
                   No corridors configured yet.
