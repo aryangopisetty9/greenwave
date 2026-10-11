@@ -1,14 +1,20 @@
 import os
 import sys
 import xml.etree.ElementTree as ET
-import traci
+SUMO_HOME = os.environ.get('SUMO_HOME', r"C:\Program Files (x86)\SUMO")
+tools = os.path.join(SUMO_HOME, 'tools')
+if os.path.exists(tools) and tools not in sys.path:
+    sys.path.append(tools)
 
-# We need simulation service to evaluate candidates
-# But we can't import it directly due to circular dependency, so we'll pass the evaluator callback
-SUMO_HOME = r"C:\Program Files (x86)\SUMO"
-if 'SUMO_HOME' not in os.environ:
-    os.environ['SUMO_HOME'] = SUMO_HOME
-sys.path.append(os.path.join(SUMO_HOME, 'tools'))
+try:
+    import traci
+except ImportError:
+    traci = None
+
+class MockPhase:
+    def __init__(self, duration, state):
+        self.duration = duration
+        self.state = state
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sumo")
 
@@ -109,7 +115,10 @@ class OptimizerService:
         for tl_id, phases in timings_dict.items():
             traci_phases = []
             for (dur, state) in phases:
-                traci_phases.append(traci.trafficlight.Phase(dur, state))
+                if traci is not None:
+                    traci_phases.append(traci.trafficlight.Phase(dur, state))
+                else:
+                    traci_phases.append(MockPhase(dur, state))
             result[tl_id] = traci_phases
         return result
 

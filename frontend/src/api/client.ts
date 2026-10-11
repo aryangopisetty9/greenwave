@@ -30,14 +30,21 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   }
 
   if (!response.ok) {
-    let errorMessage = 'The service is temporarily unavailable. Please try again.';
+    let errorMessage = `Service unavailable (${response.status}). Please try again.`;
     try {
-      const errData = await response.json();
-      if (errData.detail) {
-        errorMessage = errData.detail;
+      const errText = await response.text();
+      try {
+        const errData = JSON.parse(errText);
+        if (errData.detail) {
+          errorMessage = typeof errData.detail === 'string' ? errData.detail : JSON.stringify(errData.detail);
+        }
+      } catch {
+        if (errText && errText.length < 120 && !errText.includes('<!doctype') && !errText.includes('<html')) {
+          errorMessage = errText.trim();
+        }
       }
-    } catch (e) {
-      // Non-JSON error response
+    } catch {
+      // Stream read failed
     }
     throw new Error(errorMessage);
   }

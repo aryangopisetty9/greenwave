@@ -43,7 +43,10 @@ class CVService:
             "traffic_3": {"id": "traffic_3", "name": "Traffic 3", "description": "Traffic video scenario 3", "file": "traffic_3.mp4"},
         }
         self.video_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/videos"))
-        os.makedirs(self.video_dir, exist_ok=True)
+        try:
+            os.makedirs(self.video_dir, exist_ok=True)
+        except OSError:
+            pass
         self._load_model()
 
     def _load_model(self):
