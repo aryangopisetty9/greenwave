@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
 from app.models.domain import UserRole
@@ -10,6 +10,23 @@ class UserBase(BaseModel):
     role: UserRole
     is_active: bool = True
     district_id: Optional[int] = None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, v):
+        if isinstance(v, str):
+            clean = v.strip().lower()
+            if clean in ("admin", "global_admin"):
+                return UserRole.GLOBAL_ADMIN
+            if clean in ("operator", "district_officer"):
+                return UserRole.DISTRICT_OFFICER
+            if clean == "national_admin":
+                return UserRole.NATIONAL_ADMIN
+            if clean == "state_officer":
+                return UserRole.STATE_OFFICER
+            if clean == "zone_officer":
+                return UserRole.ZONE_OFFICER
+        return v
 
 class UserCreate(UserBase):
     password: str

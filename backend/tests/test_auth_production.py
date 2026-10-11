@@ -180,3 +180,48 @@ def test_production_config_validation(monkeypatch):
     with pytest.raises(ValueError, match="Production database is not configured"):
         cfg.validate_production_config()
 
+def test_user_response_legacy_role_normalization():
+    from app.schemas.domain import UserResponse
+    u = User(
+        id=1,
+        email="operator@example.com",
+        role="DISTRICT_OFFICER",
+        is_active=True
+    )
+    validated = UserResponse.model_validate(u)
+    assert validated.role == UserRole.DISTRICT_OFFICER
+    assert validated.role.value == "district_officer"
+
+def test_sanitized_db_error_logger(caplog):
+    import logging
+    from app.main import log_sanitized_db_error
+    
+    mock_orig = MagicMock()
+    mock_orig.sqlstate = "42P01"
+    mock_orig.diag = MagicMock(table_name="users", column_name=None, message_primary='relation "users" does not exist')
+    
+    mock_err = Exception("Database failure")
+    mock_err.orig = mock_orig
+    
+    with caplog.at_level(logging.ERROR):
+        log_sanitized_db_error("authentication", mock_err)
+    
+    assert "Database error during authentication" in caplog.text
+    assert "SQLSTATE=42P01" in caplog.text
+    assert "table=users" in caplog.text
+    assert "relation \"users\" does not exist" in caplog.text
+    assert "postgres://" not in caplog.text
+
+def test_ensure_database_schema_noop_when_populated():
+    from app.main import ensure_database_schema
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    # Mock inspect returning users and states
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("sqlalchemy.inspect", lambda conn: MagicMock(get_table_names=lambda: ["users", "states"]))
+        ensure_database_schema(mock_engine)
+    # create_all should NOT be called
+    mock_engine.execute.assert_not_called()
+
+

@@ -30,6 +30,89 @@ app.include_router(cv.router, prefix=f"{settings.API_V1_STR}/cv", tags=["cv"])
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(alerts.router, prefix=f"{settings.API_V1_STR}/alerts", tags=["alerts"])
 
+def log_sanitized_db_error(context: str, e: Exception) -> None:
+    """Safely log database errors with SQLSTATE and diagnostics without exposing secrets."""
+    import logging
+    logger = logging.getLogger("uvicorn.error")
+    
+    orig = getattr(e, "orig", e)
+    sqlstate = getattr(orig, "sqlstate", getattr(orig, "pgcode", "UNKNOWN"))
+    diag = getattr(orig, "diag", None)
+    
+    table_name = getattr(diag, "table_name", None) if diag else None
+    column_name = getattr(diag, "column_name", None) if diag else None
+    primary_msg = getattr(diag, "message_primary", None) if diag else None
+    
+    if not primary_msg:
+        raw_msg = str(orig).splitlines()[0] if str(orig) else type(e).__name__
+        primary_msg = raw_msg.split("://")[0] if "://" in raw_msg else raw_msg
+        
+    logger.error(
+        f"Database error during {context}: {type(e).__name__} "
+        f"[SQLSTATE={sqlstate}, table={table_name or 'N/A'}, column={column_name or 'N/A'}, detail={primary_msg}]"
+    )
+
+def ensure_database_schema(db_engine):
+    """Ensure required database schema and initial data exist in PostgreSQL."""
+    if not settings.SQLALCHEMY_DATABASE_URI or settings.DATABASE_CONFIG_ERROR:
+        return
+        
+    from sqlalchemy import inspect, text
+    import logging
+    logger = logging.getLogger("uvicorn.info")
+    
+    try:
+        with db_engine.connect() as conn:
+            inspector = inspect(conn)
+            existing_tables = set(inspector.get_table_names())
+            if "users" in existing_tables and "states" in existing_tables:
+                return
+    except Exception as e:
+        log_sanitized_db_error("schema inspection", e)
+        return
+
+    # Database is empty. Attempt safe, synchronized schema creation and migration.
+    try:
+        with db_engine.connect() as conn:
+            is_postgres = "postgres" in settings.SQLALCHEMY_DATABASE_URI.lower()
+            lock_acquired = True
+            if is_postgres:
+                try:
+                    lock_acquired = conn.execute(text("SELECT pg_try_advisory_lock(847291)")).scalar()
+                except Exception:
+                    lock_acquired = True
+            
+            if not lock_acquired:
+                return
+
+            try:
+                inspector = inspect(conn)
+                if "users" in set(inspector.get_table_names()):
+                    return
+
+                logger.info("Initializing schema and migrating data to PostgreSQL...")
+                from app.models.domain import Base
+                Base.metadata.create_all(bind=db_engine)
+
+                # Attempt data migration from bundled greenwave.db
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                sqlite_path = os.path.join(base_dir, "greenwave.db")
+                if not os.path.exists(sqlite_path):
+                    sqlite_path = os.path.join(os.path.dirname(base_dir), "backend", "greenwave.db")
+
+                if os.path.exists(sqlite_path):
+                    from app.scripts.migrate_sqlite_to_postgres import migrate_data
+                    report = migrate_data(source_path=sqlite_path, target_url=settings.SQLALCHEMY_DATABASE_URI)
+                    logger.info(f"Auto-migration completed: success={report.get('success', False)}")
+            finally:
+                if is_postgres and lock_acquired:
+                    try:
+                        conn.execute(text("SELECT pg_advisory_unlock(847291)"))
+                    except Exception:
+                        pass
+    except Exception as e:
+        log_sanitized_db_error("schema initialization", e)
+
 @app.on_event("startup")
 def on_startup():
     import logging
@@ -38,6 +121,7 @@ def on_startup():
         logger.warning(f"Production database configuration notice: {settings.DATABASE_CONFIG_ERROR}")
     else:
         logger.info("GreenWave backend initialized successfully with persistent database.")
+        ensure_database_schema(engine)
 
 class Token(BaseModel):
     access_token: str
@@ -66,10 +150,24 @@ class LocationDistrictResponse(BaseModel):
 @app.get("/health")
 @app.get(f"{settings.API_V1_STR}/health")
 def health_check():
-    db_status = "connected" if (settings.SQLALCHEMY_DATABASE_URI and not settings.DATABASE_CONFIG_ERROR) else "unconfigured"
+    db_status = "unconfigured"
+    schema_status = "unconfigured"
+    if settings.SQLALCHEMY_DATABASE_URI and not settings.DATABASE_CONFIG_ERROR:
+        from sqlalchemy import inspect, text
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                db_status = "connected"
+                inspector = inspect(conn)
+                tables = inspector.get_table_names()
+                schema_status = "ready" if "users" in tables else "empty_schema"
+        except Exception as e:
+            db_status = "error"
+            schema_status = f"error: {type(e).__name__}"
     return {
         "status": "healthy",
-        "database": db_status
+        "database": db_status,
+        "schema": schema_status
     }
 
 @app.post(f"{settings.API_V1_STR}/auth/login", response_model=Token)
@@ -82,8 +180,7 @@ def login(login_data: LoginSchema, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logging.getLogger("uvicorn.error").error(f"Database error during authentication: {type(e).__name__}")
+        log_sanitized_db_error("authentication", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service temporarily unavailable. Please verify backend database configuration."
@@ -144,8 +241,7 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logging.getLogger("uvicorn.error").error(f"Database error during registration: {type(e).__name__}")
+        log_sanitized_db_error("registration", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service temporarily unavailable. Please verify backend database configuration."
@@ -167,8 +263,7 @@ def get_states(db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logging.getLogger("uvicorn.error").error(f"Database error fetching states: {type(e).__name__}")
+        log_sanitized_db_error("fetching states", e)
         return []
 
 @app.get(f"{settings.API_V1_STR}/locations/states/{{state_id}}/districts", response_model=List[LocationDistrictResponse])
@@ -178,8 +273,7 @@ def get_districts_by_state(state_id: int, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logging.getLogger("uvicorn.error").error(f"Database error fetching districts: {type(e).__name__}")
+        log_sanitized_db_error("fetching districts", e)
         return []
 
 @app.get(f"{settings.API_V1_STR}/locations/districts/{{district_id}}/cities", response_model=List[CityResponse])

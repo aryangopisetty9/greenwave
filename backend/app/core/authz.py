@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session, Query
 from app.models.domain import User, UserRole, UserScope, Country, State, District, City, OperationalZone, Corridor, Intersection, TrafficObservation, DemoSession, DemoDecision, DemoMeasurement
 
 def apply_geographic_scope(query: Query, model, user: User, db: Session) -> Query:
-    if user.role == UserRole.GLOBAL_ADMIN:
+    if user.role in (UserRole.GLOBAL_ADMIN, "GLOBAL_ADMIN", "global_admin", "admin", "ADMIN"):
         return query
         
     scopes = db.query(UserScope).filter(UserScope.user_id == user.id).all()

@@ -10,6 +10,33 @@ class UserRole(str, enum.Enum):
     STATE_OFFICER = "state_officer"
     DISTRICT_OFFICER = "district_officer"
     ZONE_OFFICER = "zone_officer"
+    
+    # Legacy / SQLite uppercase values
+    LEGACY_GLOBAL_ADMIN = "GLOBAL_ADMIN"
+    LEGACY_NATIONAL_ADMIN = "NATIONAL_ADMIN"
+    LEGACY_STATE_OFFICER = "STATE_OFFICER"
+    LEGACY_DISTRICT_OFFICER = "DISTRICT_OFFICER"
+    LEGACY_ZONE_OFFICER = "ZONE_OFFICER"
+    LEGACY_ADMIN = "ADMIN"
+    LEGACY_OPERATOR = "OPERATOR"
+
+    @classmethod
+    def normalize(cls, val):
+        if isinstance(val, cls):
+            val = val.value
+        if isinstance(val, str):
+            v = val.strip().lower()
+            if v in ("admin", "global_admin"):
+                return cls.GLOBAL_ADMIN
+            if v in ("operator", "district_officer"):
+                return cls.DISTRICT_OFFICER
+            if v == "national_admin":
+                return cls.NATIONAL_ADMIN
+            if v == "state_officer":
+                return cls.STATE_OFFICER
+            if v == "zone_officer":
+                return cls.ZONE_OFFICER
+        return val
 
 class User(Base):
     __tablename__ = "users"
@@ -18,7 +45,7 @@ class User(Base):
     full_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.DISTRICT_OFFICER, nullable=False)
+    role = Column(String, default="district_officer", nullable=False)
     is_active = Column(Boolean, default=True)
     district_id = Column(Integer, ForeignKey("districts.id"), nullable=True)
 
