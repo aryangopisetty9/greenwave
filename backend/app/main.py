@@ -31,8 +31,11 @@ app.include_router(cv.router, prefix=f"{settings.API_V1_STR}/cv", tags=["cv"])
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(alerts.router, prefix=f"{settings.API_V1_STR}/alerts", tags=["alerts"])
 
+_last_sanitized_error = None
+
 def log_sanitized_db_error(context: str, e: Exception) -> None:
     """Safely log database errors with SQLSTATE and diagnostics without exposing secrets."""
+    global _last_sanitized_error
     import logging
     logger = logging.getLogger("uvicorn.error")
     
@@ -48,10 +51,9 @@ def log_sanitized_db_error(context: str, e: Exception) -> None:
         raw_msg = str(orig).splitlines()[0] if str(orig) else type(e).__name__
         primary_msg = raw_msg.split("://")[0] if "://" in raw_msg else raw_msg
         
-    logger.error(
-        f"Database error during {context}: {type(e).__name__} "
-        f"[SQLSTATE={sqlstate}, table={table_name or 'N/A'}, column={column_name or 'N/A'}, detail={primary_msg}]"
-    )
+    error_summary = f"{type(e).__name__} [SQLSTATE={sqlstate}, table={table_name or 'N/A'}, column={column_name or 'N/A'}, detail={primary_msg}]"
+    _last_sanitized_error = {"context": context, "summary": error_summary}
+    logger.error(f"Database error during {context}: {error_summary}")
 
 def find_migration_source() -> Optional[str]:
     """Locate bundled initial_data.json or greenwave.db in development or serverless environments."""
@@ -255,7 +257,8 @@ def health_check():
         "status": "healthy",
         "database": db_status,
         "schema": schema_status,
-        "rows": rows
+        "rows": rows,
+        "last_db_error": _last_sanitized_error
     }
 
 @app.post(f"{settings.API_V1_STR}/auth/login", response_model=Token)
