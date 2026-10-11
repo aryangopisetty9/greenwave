@@ -257,8 +257,7 @@ def health_check():
         "status": "healthy",
         "database": db_status,
         "schema": schema_status,
-        "rows": rows,
-        "last_db_error": _last_sanitized_error
+        "rows": rows
     }
 
 @app.post(f"{settings.API_V1_STR}/auth/login", response_model=Token)
@@ -306,9 +305,9 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         if not district:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state/district combination")
             
-        d_name = district.name
+        d_name = district.name if (district and isinstance(getattr(district, "name", None), str)) else None
         state = db.query(State).filter(State.id == signup_data.state_id).first()
-        s_name = state.name if state else None
+        s_name = state.name if (state and isinstance(getattr(state, "name", None), str)) else None
 
         from sqlalchemy import func
         from app.models.domain import UserScope
@@ -363,13 +362,9 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         log_sanitized_db_error("registration", e)
-        orig = getattr(e, "orig", e)
-        sqlstate = getattr(orig, "sqlstate", getattr(orig, "pgcode", "UNKNOWN"))
-        diag = getattr(orig, "diag", None)
-        table_name = getattr(diag, "table_name", None) if diag else None
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database service temporarily unavailable: {type(e).__name__} [SQLSTATE={sqlstate}, table={table_name or 'N/A'}]"
+            detail="Database service temporarily unavailable. Please verify backend database configuration."
         )
 
 @app.post(f"{settings.API_V1_STR}/auth/logout")

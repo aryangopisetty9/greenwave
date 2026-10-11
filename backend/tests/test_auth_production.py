@@ -97,10 +97,11 @@ def test_login_malformed_request():
 
 def test_signup_operator_successful():
     mock_db = MagicMock()
-    # No existing user
+    # No existing user, district check, state check
     mock_db.query.return_value.filter.return_value.first.side_effect = [
         None,  # email check
-        MagicMock(id=1, state_id=1)  # district check
+        MagicMock(id=1, state_id=1, name="Mumbai"),  # district check
+        MagicMock(id=1, name="Maharashtra")  # state check
     ]
     def assign_id(user):
         user.id = 10
