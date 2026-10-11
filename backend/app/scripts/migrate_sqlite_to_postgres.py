@@ -8,7 +8,7 @@ import sys
 import argparse
 import sqlite3
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 
 from sqlalchemy import create_engine, text, inspect
@@ -51,7 +51,7 @@ def backup_sqlite_db(source_path: str, backup_dir: Optional[str] = None) -> str:
         backup_dir = os.path.join(os.path.dirname(source_path), "backups")
     os.makedirs(backup_dir, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_filename = f"greenwave_backup_{timestamp}.db"
     backup_path = os.path.join(backup_dir, backup_filename)
 
@@ -84,7 +84,7 @@ def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Di
     Returns a comprehensive migration result report.
     """
     report = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "source_path": source_path,
         "backup_path": None,
         "dry_run": dry_run,
@@ -151,7 +151,7 @@ def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Di
                             INSERT INTO demo_sessions (id, start_time, status)
                             VALUES (:id, :start_time, :status)
                             ON CONFLICT (id) DO NOTHING;
-                        """), {"id": s_id, "start_time": datetime.utcnow(), "status": "completed"})
+                        """), {"id": s_id, "start_time": datetime.now(timezone.utc), "status": "completed"})
                         report.setdefault("reconciled_sessions", []).append(s_id)
 
         # 4. Migrate tables in dependency order
