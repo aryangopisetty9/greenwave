@@ -133,7 +133,7 @@ def ensure_database_schema(db_engine):
     logger = logging.getLogger("uvicorn.info")
     
     try:
-        with db_engine.connect() as conn:
+        with db_engine.begin() as conn:
             inspector = inspect(conn)
             existing_tables = set(inspector.get_table_names())
             if "users" in existing_tables and "states" in existing_tables:
@@ -303,12 +303,12 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         if not district:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state/district combination")
             
-        from app.models.domain import UserRole, UserScope
+        from app.models.domain import UserScope
         new_user = User(
             full_name=signup_data.full_name,
             email=email_clean,
             hashed_password=signup_data.password, 
-            role=UserRole.DISTRICT_OFFICER, 
+            role="district_officer", 
             district_id=signup_data.district_id,
             is_active=True
         )
@@ -317,13 +317,17 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         db.refresh(new_user)
         
         # Add scope
-        new_scope = UserScope(
-            user_id=new_user.id,
-            district_id=signup_data.district_id,
-            state_id=signup_data.state_id
-        )
-        db.add(new_scope)
-        db.commit()
+        try:
+            new_scope = UserScope(
+                user_id=new_user.id,
+                district_id=signup_data.district_id,
+                state_id=signup_data.state_id
+            )
+            db.add(new_scope)
+            db.commit()
+        except Exception as scope_err:
+            db.rollback()
+            log_sanitized_db_error("registration scope creation", scope_err)
         
         user_id = new_user.id
         d_name = district.name if (district and isinstance(getattr(district, "name", None), str)) else None
@@ -333,7 +337,7 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
             id=user_id,
             email=email_clean,
             full_name=signup_data.full_name,
-            role=UserRole.DISTRICT_OFFICER,
+            role="district_officer",
             is_active=True,
             district_id=signup_data.district_id,
             state_id=signup_data.state_id,
@@ -344,6 +348,7 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
+        db.rollback()
         log_sanitized_db_error("registration", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
