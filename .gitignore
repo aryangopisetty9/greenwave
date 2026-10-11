@@ -1,0 +1,17 @@
+.vercel
+.env
+.env.*
+!.env.example
+!.env.sample
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+.venv/
+venv/
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/

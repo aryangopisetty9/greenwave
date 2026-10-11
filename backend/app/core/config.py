@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "greenwave"
+    POSTGRES_URL: Optional[str] = None
+    DATABASE_URL: Optional[str] = None
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
     
     # Traffic Provider (e.g., TomTom)
@@ -30,7 +32,16 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        if not self.SQLALCHEMY_DATABASE_URI:
+        # Check standard hosted database environment variables
+        db_uri = self.SQLALCHEMY_DATABASE_URI or self.POSTGRES_URL or self.DATABASE_URL
+        if db_uri:
+            # Normalize postgres:// and postgresql:// to postgresql+psycopg://
+            if db_uri.startswith("postgres://"):
+                db_uri = db_uri.replace("postgres://", "postgresql+psycopg://", 1)
+            elif db_uri.startswith("postgresql://") and not db_uri.startswith("postgresql+"):
+                db_uri = db_uri.replace("postgresql://", "postgresql+psycopg://", 1)
+            self.SQLALCHEMY_DATABASE_URI = db_uri
+        elif not self.SQLALCHEMY_DATABASE_URI:
             self.SQLALCHEMY_DATABASE_URI = f"postgresql+psycopg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
 
 settings = Settings()

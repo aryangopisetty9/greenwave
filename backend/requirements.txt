@@ -8,3 +8,4 @@ psycopg[binary]
 httpx
 pytest
 email-validator
+numpy

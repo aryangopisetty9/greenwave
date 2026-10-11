@@ -30,6 +30,13 @@ app.include_router(cv.router, prefix=f"{settings.API_V1_STR}/cv", tags=["cv"])
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(alerts.router, prefix=f"{settings.API_V1_STR}/alerts", tags=["alerts"])
 
+@app.on_event("startup")
+def init_db():
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Database startup table initialization notice: {e}")
+
 class Token(BaseModel):
     access_token: str
     token_type: str
