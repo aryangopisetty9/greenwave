@@ -4,7 +4,8 @@
     { "id": 2, "name": "Karnataka" },
     { "id": 3, "name": "Delhi" },
     { "id": 4, "name": "Tamil Nadu" },
-    { "id": 5, "name": "Telangana" }
+    { "id": 5, "name": "Telangana" },
+    { "id": 6, "name": "Andhra Pradesh" }
   ],
   "districts": [
     { "id": 1, "state_id": 1, "name": "Mumbai" },
@@ -13,7 +14,10 @@
     { "id": 4, "state_id": 2, "name": "Mysuru" },
     { "id": 5, "state_id": 3, "name": "New Delhi" },
     { "id": 6, "state_id": 4, "name": "Chennai" },
-    { "id": 7, "state_id": 5, "name": "Hyderabad" }
+    { "id": 7, "state_id": 5, "name": "Hyderabad" },
+    { "id": 11, "state_id": 6, "name": "Guntur" },
+    { "id": 12, "state_id": 6, "name": "Vijayawada (NTR)" },
+    { "id": 13, "state_id": 6, "name": "Visakhapatnam" }
   ],
   "corridors": [
     {

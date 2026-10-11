@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List
 
@@ -42,6 +43,11 @@ class Settings(BaseSettings):
                 db_uri = db_uri.replace("postgresql://", "postgresql+psycopg://", 1)
             self.SQLALCHEMY_DATABASE_URI = db_uri
         elif not self.SQLALCHEMY_DATABASE_URI:
-            self.SQLALCHEMY_DATABASE_URI = f"postgresql+psycopg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
+            # In serverless environments (e.g. Vercel), /tmp is the only writable directory.
+            # Fall back to SQLite in /tmp if hosted Postgres is not configured, instead of hanging on localhost:5432.
+            if os.path.exists("/tmp"):
+                self.SQLALCHEMY_DATABASE_URI = "sqlite:////tmp/greenwave.db"
+            else:
+                self.SQLALCHEMY_DATABASE_URI = "sqlite:///./greenwave.db"
 
 settings = Settings()
