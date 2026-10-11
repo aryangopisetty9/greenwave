@@ -30,131 +30,14 @@ app.include_router(cv.router, prefix=f"{settings.API_V1_STR}/cv", tags=["cv"])
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(alerts.router, prefix=f"{settings.API_V1_STR}/alerts", tags=["alerts"])
 
-def seed_default_data(db: Session):
-    """Seed initial states, districts, and officer accounts safely and idempotently."""
-    import json
-    import os
-    from datetime import datetime
-    from app.models.domain import UserScope, City, OperationalZone, Intersection
-
-    try:
-        # 1. Seed States & Districts if table is empty
-        if db.query(State).count() == 0:
-            json_path = os.path.join(os.path.dirname(__file__), "data", "locations.json")
-            if os.path.exists(json_path):
-                with open(json_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for s in data.get("states", []):
-                    if not db.query(State).filter_by(id=s["id"]).first():
-                        db.add(State(id=s["id"], name=s["name"]))
-                db.commit()
-
-                for d in data.get("districts", []):
-                    if not db.query(District).filter_by(id=d["id"]).first():
-                        db.add(District(id=d["id"], state_id=d["state_id"], name=d["name"]))
-                db.commit()
-
-        # 2. Seed default officer user if missing
-        ap_user = db.query(User).filter(User.email == "ap@gmail.com").first()
-        if not ap_user:
-            ap_user = User(
-                email="ap@gmail.com",
-                full_name="Inspector Rajesh Varma, IPS",
-                hashed_password="password",
-                role=UserRole.DISTRICT_OFFICER,
-                district_id=11,
-                is_active=True
-            )
-            db.add(ap_user)
-            db.commit()
-            db.refresh(ap_user)
-
-            ap_scope = UserScope(user_id=ap_user.id, district_id=11, state_id=6)
-            db.add(ap_scope)
-            db.commit()
-
-        op_user = db.query(User).filter(User.email == "operator@greenwave.com").first()
-        if not op_user:
-            op_user = User(
-                email="operator@greenwave.com",
-                full_name="Inspector Suresh Patil, IPS",
-                hashed_password="password",
-                role=UserRole.DISTRICT_OFFICER,
-                district_id=3,
-                is_active=True
-            )
-            db.add(op_user)
-            db.commit()
-            db.refresh(op_user)
-
-            op_scope = UserScope(user_id=op_user.id, district_id=3, state_id=2)
-            db.add(op_scope)
-            db.commit()
-
-        # 3. Seed Guntur Intersections if missing
-        if db.query(Intersection).filter(Intersection.id == 1101).first() is None:
-            guntur_city = db.query(City).filter(City.district_id == 11).first()
-            if not guntur_city:
-                guntur_city = City(id=1101, district_id=11, name="Guntur")
-                db.add(guntur_city)
-                db.commit()
-                db.refresh(guntur_city)
-
-            zone1 = db.query(OperationalZone).filter(OperationalZone.id == 1101).first()
-            if not zone1:
-                zone1 = OperationalZone(id=1101, city_id=guntur_city.id, name="Central Commercial Zone")
-                db.add(zone1)
-            zone2 = db.query(OperationalZone).filter(OperationalZone.id == 1102).first()
-            if not zone2:
-                zone2 = OperationalZone(id=1102, city_id=guntur_city.id, name="Administrative & Highway Zone")
-                db.add(zone2)
-            db.commit()
-
-            corridors_data = [
-                (1101, "Arundelpet Main Commercial Arterial", zone1.id),
-                (1102, "Brodipet 4th Line Arterial", zone1.id),
-                (1103, "Lodge Center - Collectorate Highway", zone2.id),
-                (1104, "NTR Stadium Transit Expressway", zone2.id),
-            ]
-            for c_id, c_name, z_id in corridors_data:
-                if not db.query(Corridor).filter(Corridor.id == c_id).first():
-                    db.add(Corridor(id=c_id, city_id=guntur_city.id, zone_id=z_id, name=c_name))
-            db.commit()
-
-            intersections_data = [
-                (1101, 1101, "Lodge Center Junction Signal", 16.3067, 80.4365, "OSM", True),
-                (1102, 1101, "Brodipet 4th Line Traffic Signal", 16.3012, 80.4421, "OSM", True),
-                (1103, 1102, "Arundelpet 5/1 Traffic Signal", 16.2985, 80.4480, "OSM", True),
-                (1104, 1102, "Collectorate Circle Signal", 16.3120, 80.4390, "OSM", True),
-                (1105, 1103, "NTR Stadium Crossing Signal", 16.3185, 80.4320, "OSM", True),
-                (1106, 1103, "Old Bus Stand Circle Signal", 16.3045, 80.4510, "OSM", True),
-                (1107, 1104, "Amaravathi Road Signal", 16.3210, 80.4280, "OSM", True),
-                (1108, 1104, "Chuttugunta Traffic Junction", 16.2920, 80.4560, "OSM", True),
-            ]
-            for i_id, c_id, name, lat, lon, source, is_v in intersections_data:
-                if not db.query(Intersection).filter(Intersection.id == i_id).first():
-                    db.add(Intersection(
-                        id=i_id, corridor_id=c_id, name=name, lat=lat, lon=lon,
-                        source=source, is_verified=is_v, verified_by_id=ap_user.id,
-                        verified_at=datetime.utcnow()
-                    ))
-            db.commit()
-    except Exception as e:
-        import logging
-        logging.getLogger("uvicorn.error").warning(f"Error during default data seeding: {e}")
-
 @app.on_event("startup")
-def init_db():
-    try:
-        Base.metadata.create_all(bind=engine)
-        db = SessionLocal()
-        try:
-            seed_default_data(db)
-        finally:
-            db.close()
-    except Exception as e:
-        import logging
-        logging.getLogger("uvicorn.error").warning(f"Database startup initialization notice: {e}")
+def on_startup():
+    import logging
+    logger = logging.getLogger("uvicorn.info")
+    if settings.DATABASE_CONFIG_ERROR:
+        logger.warning(f"Production database configuration notice: {settings.DATABASE_CONFIG_ERROR}")
+    else:
+        logger.info("GreenWave backend initialized successfully with persistent database.")
 
 class Token(BaseModel):
     access_token: str
@@ -183,7 +66,11 @@ class LocationDistrictResponse(BaseModel):
 @app.get("/health")
 @app.get(f"{settings.API_V1_STR}/health")
 def health_check():
-    return {"status": "healthy"}
+    db_status = "connected" if (settings.SQLALCHEMY_DATABASE_URI and not settings.DATABASE_CONFIG_ERROR) else "unconfigured"
+    return {
+        "status": "healthy",
+        "database": db_status
+    }
 
 @app.post(f"{settings.API_V1_STR}/auth/login", response_model=Token)
 def login(login_data: LoginSchema, db: Session = Depends(get_db)):
@@ -192,9 +79,11 @@ def login(login_data: LoginSchema, db: Session = Depends(get_db)):
         user = db.query(User).filter(User.email.ilike(email_clean)).first()
         if not user:
             user = db.query(User).filter(User.email == login_data.email.strip()).first()
+    except HTTPException:
+        raise
     except Exception as e:
         import logging
-        logging.getLogger("uvicorn.error").error(f"Database error during authentication: {e}")
+        logging.getLogger("uvicorn.error").error(f"Database error during authentication: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service temporarily unavailable. Please verify backend database configuration."
@@ -202,6 +91,9 @@ def login(login_data: LoginSchema, db: Session = Depends(get_db)):
 
     if not user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect email or password")
+
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is pending administrative approval or deactivated.")
 
     is_valid = (user.hashed_password == login_data.password)
     if not is_valid and user.email in ("ap@gmail.com", "operator@greenwave.com"):
@@ -216,12 +108,15 @@ def login(login_data: LoginSchema, db: Session = Depends(get_db)):
 def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
     try:
         email_clean = signup_data.email.strip().lower()
+        if not email_clean or "@" not in email_clean or "." not in email_clean:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format")
+
         if db.query(User).filter(User.email.ilike(email_clean)).first():
-            raise HTTPException(status_code=400, detail="Email already registered")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
             
         district = db.query(District).filter(District.id == signup_data.district_id, District.state_id == signup_data.state_id).first()
         if not district:
-            raise HTTPException(status_code=400, detail="Invalid state/district combination")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state/district combination")
             
         from app.models.domain import UserRole, UserScope
         new_user = User(
@@ -250,7 +145,7 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         import logging
-        logging.getLogger("uvicorn.error").error(f"Database error during registration: {e}")
+        logging.getLogger("uvicorn.error").error(f"Database error during registration: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service temporarily unavailable. Please verify backend database configuration."
@@ -269,18 +164,22 @@ async def get_traffic_status():
 def get_states(db: Session = Depends(get_db)):
     try:
         return db.query(State).all()
+    except HTTPException:
+        raise
     except Exception as e:
         import logging
-        logging.getLogger("uvicorn.error").error(f"Database error fetching states: {e}")
+        logging.getLogger("uvicorn.error").error(f"Database error fetching states: {type(e).__name__}")
         return []
 
 @app.get(f"{settings.API_V1_STR}/locations/states/{{state_id}}/districts", response_model=List[LocationDistrictResponse])
 def get_districts_by_state(state_id: int, db: Session = Depends(get_db)):
     try:
         return db.query(District).filter(District.state_id == state_id).all()
+    except HTTPException:
+        raise
     except Exception as e:
         import logging
-        logging.getLogger("uvicorn.error").error(f"Database error fetching districts: {e}")
+        logging.getLogger("uvicorn.error").error(f"Database error fetching districts: {type(e).__name__}")
         return []
 
 @app.get(f"{settings.API_V1_STR}/locations/districts/{{district_id}}/cities", response_model=List[CityResponse])

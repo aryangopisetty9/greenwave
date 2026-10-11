@@ -9,11 +9,11 @@ client = TestClient(app)
 def test_health_check_endpoint():
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json() == {"status": "healthy"}
+    assert res.json()["status"] == "healthy"
 
     res_v1 = client.get("/api/v1/health")
     assert res_v1.status_code == 200
-    assert res_v1.json() == {"status": "healthy"}
+    assert res_v1.json()["status"] == "healthy"
 
 def test_login_valid_credentials():
     mock_db = MagicMock()
@@ -94,3 +94,89 @@ def test_login_database_error():
 def test_login_malformed_request():
     res = client.post("/api/v1/auth/login", json={"invalid_key": "val"})
     assert res.status_code == 422
+
+def test_signup_operator_successful():
+    mock_db = MagicMock()
+    # No existing user
+    mock_db.query.return_value.filter.return_value.first.side_effect = [
+        None,  # email check
+        MagicMock(id=1, state_id=1)  # district check
+    ]
+    def assign_id(user):
+        user.id = 10
+        user.created_at = None
+    mock_db.refresh.side_effect = assign_id
+    app.dependency_overrides[get_db] = lambda: mock_db
+    try:
+        signup_payload = {
+            "full_name": "Test Officer",
+            "email": "officer@example.com",
+            "password": "securepassword123",
+            "state_id": 1,
+            "district_id": 1
+        }
+        res = client.post("/api/v1/auth/signup", json=signup_payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["email"] == "officer@example.com"
+        assert data["role"] == "district_officer"
+        assert mock_db.commit.called
+    finally:
+        app.dependency_overrides.clear()
+
+def test_signup_duplicate_email():
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = MagicMock(id=99)
+    app.dependency_overrides[get_db] = lambda: mock_db
+    try:
+        signup_payload = {
+            "full_name": "Test Officer",
+            "email": "existing@example.com",
+            "password": "securepassword123",
+            "state_id": 1,
+            "district_id": 1
+        }
+        res = client.post("/api/v1/auth/signup", json=signup_payload)
+        assert res.status_code == 400
+        assert "Email already registered" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+def test_signup_invalid_email_format():
+    res = client.post("/api/v1/auth/signup", json={
+        "full_name": "Bad Email",
+        "email": "notanemail",
+        "password": "password",
+        "state_id": 1,
+        "district_id": 1
+    })
+    assert res.status_code == 400
+    assert "Invalid email address format" in res.json()["detail"]
+
+def test_signup_database_error_sanitized():
+    mock_db = MagicMock()
+    mock_db.query.side_effect = Exception("Database connection failure")
+    app.dependency_overrides[get_db] = lambda: mock_db
+    try:
+        res = client.post("/api/v1/auth/signup", json={
+            "full_name": "Test",
+            "email": "test@example.com",
+            "password": "password",
+            "state_id": 1,
+            "district_id": 1
+        })
+        assert res.status_code == 503
+        assert "Database service temporarily unavailable" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+def test_production_config_validation(monkeypatch):
+    from app.core.config import Settings
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.delenv("POSTGRES_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("SQLALCHEMY_DATABASE_URI", raising=False)
+    cfg = Settings()
+    with pytest.raises(ValueError, match="Production database is not configured"):
+        cfg.validate_production_config()
+

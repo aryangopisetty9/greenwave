@@ -58,6 +58,11 @@ class State(Base):
     country_id = Column(Integer, ForeignKey("countries.id"), nullable=True)
     name = Column(String, unique=True, nullable=False)
     is_active = Column(Boolean, default=True)
+    source_id = Column(String, nullable=True)
+    source = Column(String, nullable=True)
+    version = Column(String, nullable=True)
+    retrieval_date = Column(DateTime, nullable=True)
+    import_status = Column(String, nullable=True)
 
     country = relationship("Country", back_populates="states")
     districts = relationship("District", back_populates="state", cascade="all, delete-orphan")
@@ -69,6 +74,11 @@ class District(Base):
     state_id = Column(Integer, ForeignKey("states.id"), nullable=True)
     name = Column(String, index=True, nullable=False)
     is_active = Column(Boolean, default=True)
+    source_id = Column(String, nullable=True)
+    source = Column(String, nullable=True)
+    version = Column(String, nullable=True)
+    retrieval_date = Column(DateTime, nullable=True)
+    import_status = Column(String, nullable=True)
     
     state = relationship("State", back_populates="districts")
     
@@ -81,6 +91,9 @@ class City(Base):
     id = Column(Integer, primary_key=True, index=True)
     district_id = Column(Integer, ForeignKey("districts.id"), nullable=False)
     name = Column(String, index=True, nullable=False)
+    source_id = Column(String, nullable=True)
+    source = Column(String, nullable=True)
+    retrieval_date = Column(DateTime, nullable=True)
     
     district = relationship("District", back_populates="cities")
     corridors = relationship("Corridor", back_populates="city", cascade="all, delete-orphan")
@@ -102,6 +115,9 @@ class Corridor(Base):
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=False)
     zone_id = Column(Integer, ForeignKey("operational_zones.id"), nullable=True)
     name = Column(String, nullable=False)
+    source_id = Column(String, nullable=True)
+    source = Column(String, nullable=True)
+    retrieval_date = Column(DateTime, nullable=True)
     
     city = relationship("City", back_populates="corridors")
     zone = relationship("OperationalZone", back_populates="corridors")
@@ -137,6 +153,8 @@ class Intersection(Base):
     verified_at = Column(DateTime, nullable=True)
     match_distance = Column(Float, nullable=True)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    source_id = Column(String, nullable=True)
+    retrieval_date = Column(DateTime, nullable=True)
     
     corridor = relationship("Corridor", back_populates="intersections")
     verified_by = relationship("User")
