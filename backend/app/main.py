@@ -303,8 +303,15 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         if not district:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state/district combination")
             
+        from sqlalchemy import func
         from app.models.domain import UserScope
+        
+        raw_max_uid = db.query(func.max(User.id)).scalar()
+        max_user_id = int(raw_max_uid) if isinstance(raw_max_uid, (int, float)) else 0
+        user_id = max_user_id + 1
+        
         new_user = User(
+            id=user_id,
             full_name=signup_data.full_name,
             email=email_clean,
             hashed_password=signup_data.password, 
@@ -314,12 +321,14 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         )
         db.add(new_user)
         db.commit()
-        db.refresh(new_user)
         
         # Add scope
         try:
+            raw_max_sid = db.query(func.max(UserScope.id)).scalar()
+            max_scope_id = int(raw_max_sid) if isinstance(raw_max_sid, (int, float)) else 0
             new_scope = UserScope(
-                user_id=new_user.id,
+                id=max_scope_id + 1,
+                user_id=user_id,
                 district_id=signup_data.district_id,
                 state_id=signup_data.state_id
             )
@@ -328,11 +337,10 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         except Exception as scope_err:
             db.rollback()
             log_sanitized_db_error("registration scope creation", scope_err)
-        
-        user_id = new_user.id
         d_name = district.name if (district and isinstance(getattr(district, "name", None), str)) else None
         s_name = district.state.name if (district and hasattr(district, "state") and district.state and isinstance(getattr(district.state, "name", None), str)) else None
         
+        badge = f"IPS-{int(user_id):04d}-TRF" if isinstance(user_id, (int, float)) else "GW-001"
         return UserResponse(
             id=user_id,
             email=email_clean,
@@ -343,7 +351,7 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
             state_id=signup_data.state_id,
             district_name=d_name,
             state_name=s_name,
-            badge_number=f"IPS-{user_id:04d}-TRF"
+            badge_number=badge
         )
     except HTTPException:
         raise
