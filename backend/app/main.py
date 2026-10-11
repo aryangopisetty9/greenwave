@@ -53,13 +53,27 @@ def log_sanitized_db_error(context: str, e: Exception) -> None:
         f"[SQLSTATE={sqlstate}, table={table_name or 'N/A'}, column={column_name or 'N/A'}, detail={primary_msg}]"
     )
 
-def find_sqlite_db() -> Optional[str]:
-    """Locate bundled greenwave.db in development or serverless environments."""
+def find_migration_source() -> Optional[str]:
+    """Locate bundled initial_data.json or greenwave.db in development or serverless environments."""
     curr_dir = os.path.dirname(os.path.abspath(__file__))
     backend_dir = os.path.dirname(curr_dir)
     root_dir = os.path.dirname(backend_dir)
     
-    candidates = [
+    # Priority 1: initial_data.json (guaranteed to be bundled by Vercel serverless)
+    json_candidates = [
+        os.path.join(curr_dir, "db", "initial_data.json"),
+        os.path.join(backend_dir, "app", "db", "initial_data.json"),
+        os.path.join(os.getcwd(), "app", "db", "initial_data.json"),
+        os.path.join(os.getcwd(), "backend", "app", "db", "initial_data.json"),
+        os.path.abspath("app/db/initial_data.json"),
+        os.path.abspath("backend/app/db/initial_data.json"),
+    ]
+    for path in json_candidates:
+        if os.path.exists(path) and os.path.getsize(path) > 10000:
+            return path
+
+    # Priority 2: greenwave.db
+    db_candidates = [
         os.path.join(backend_dir, "greenwave.db"),
         os.path.join(root_dir, "backend", "greenwave.db"),
         os.path.join(os.getcwd(), "greenwave.db"),
@@ -67,18 +81,22 @@ def find_sqlite_db() -> Optional[str]:
         os.path.abspath("greenwave.db"),
         os.path.abspath("backend/greenwave.db"),
     ]
-    for path in candidates:
+    for path in db_candidates:
         if os.path.exists(path) and os.path.getsize(path) > 10000:
             return path
 
-    # Search directory trees
+    # Search directory trees for json or db
     for search_root in [os.getcwd(), backend_dir, "/var/task"]:
         if os.path.exists(search_root):
             for root, _, files in os.walk(search_root):
+                if "initial_data.json" in files:
+                    p = os.path.join(root, "initial_data.json")
+                    if os.path.getsize(p) > 10000:
+                        return p
                 if "greenwave.db" in files:
-                    full_p = os.path.join(root, "greenwave.db")
-                    if os.path.getsize(full_p) > 10000:
-                        return full_p
+                    p = os.path.join(root, "greenwave.db")
+                    if os.path.getsize(p) > 10000:
+                        return p
     return None
 
 def ensure_database_schema(db_engine):
@@ -131,15 +149,15 @@ def ensure_database_schema(db_engine):
                 from app.models.domain import Base
                 Base.metadata.create_all(bind=db_engine)
 
-                # Attempt data migration from bundled greenwave.db
-                sqlite_path = find_sqlite_db()
-                if sqlite_path:
-                    logger.info(f"Found source SQLite database at {sqlite_path}, migrating...")
+                # Attempt data migration from bundled initial_data.json or greenwave.db
+                source_path = find_migration_source()
+                if source_path:
+                    logger.info(f"Found source migration data at {source_path}, migrating...")
                     from app.scripts.migrate_sqlite_to_postgres import migrate_data
-                    report = migrate_data(source_path=sqlite_path, target_url=settings.SQLALCHEMY_DATABASE_URI)
+                    report = migrate_data(source_path=source_path, target_url=settings.SQLALCHEMY_DATABASE_URI)
                     logger.info(f"Auto-migration completed: success={report.get('success', False)}")
                 else:
-                    logger.warning("Could not find greenwave.db for auto-migration.")
+                    logger.warning("Could not find migration source data for auto-migration.")
             finally:
                 if is_postgres and lock_acquired:
                     try:

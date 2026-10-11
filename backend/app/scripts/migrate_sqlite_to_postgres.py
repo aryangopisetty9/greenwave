@@ -8,6 +8,7 @@ import sys
 import argparse
 import sqlite3
 import shutil
+import json
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 
@@ -80,7 +81,7 @@ def get_sqlite_table_counts(source_conn: sqlite3.Connection) -> Dict[str, int]:
 
 def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Dict[str, Any]:
     """
-    Migrate existing data from SQLite to PostgreSQL.
+    Migrate existing data from SQLite or JSON export to PostgreSQL.
     Returns a comprehensive migration result report.
     """
     report = {
@@ -95,18 +96,26 @@ def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Di
         "error": None
     }
 
-    # 1. Back up SQLite before anything else
-    if not dry_run:
-        report["backup_path"] = backup_sqlite_db(source_path)
+    is_json = source_path.endswith(".json")
+    json_source_data = {}
 
-    # 2. Open SQLite in read-only mode
-    sqlite_uri = f"file:{os.path.abspath(source_path)}?mode=ro"
-    src_conn = sqlite3.connect(sqlite_uri, uri=True)
-    src_conn.row_factory = sqlite3.Row
-    src_cur = src_conn.cursor()
+    if is_json:
+        with open(source_path, "r", encoding="utf-8") as f:
+            json_source_data = json.load(f)
+        source_counts = {t: len(json_source_data.get(t, [])) for t in MIGRATION_TABLES if t in json_source_data}
+        src_conn = None
+        src_cur = None
+    else:
+        # 1. Back up SQLite before anything else
+        if not dry_run:
+            report["backup_path"] = backup_sqlite_db(source_path)
 
-    # Get source counts
-    source_counts = get_sqlite_table_counts(src_conn)
+        # 2. Open SQLite in read-only mode
+        sqlite_uri = f"file:{os.path.abspath(source_path)}?mode=ro"
+        src_conn = sqlite3.connect(sqlite_uri, uri=True)
+        src_conn.row_factory = sqlite3.Row
+        src_cur = src_conn.cursor()
+        source_counts = get_sqlite_table_counts(src_conn)
 
     # Normalize target URL for psycopg
     norm_target_url = target_url
@@ -139,11 +148,17 @@ def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Di
             orphan_sessions = set()
             for child_table in ["demo_decisions", "demo_measurements"]:
                 if child_table in source_counts and source_counts[child_table] > 0:
-                    src_cur.execute(f'SELECT DISTINCT session_id FROM "{child_table}" WHERE session_id NOT IN (SELECT id FROM demo_sessions);')
-                    for r in src_cur.fetchall():
-                        if r[0]:
-                            orphan_sessions.add(r[0])
-
+                    if is_json:
+                        parent_ids = {r["id"] for r in json_source_data.get("demo_sessions", []) if "id" in r}
+                        for r in json_source_data.get(child_table, []):
+                            s_id = r.get("session_id")
+                            if s_id and s_id not in parent_ids:
+                                orphan_sessions.add(s_id)
+                    else:
+                        src_cur.execute(f'SELECT DISTINCT session_id FROM "{child_table}" WHERE session_id NOT IN (SELECT id FROM demo_sessions);')
+                        for r in src_cur.fetchall():
+                            if r[0]:
+                                orphan_sessions.add(r[0])
             if orphan_sessions:
                 with target_engine.begin() as conn:
                     for s_id in orphan_sessions:
@@ -179,13 +194,18 @@ def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Di
                 continue
 
             # Fetch source records and columns
-            src_cur.execute(f'PRAGMA table_info("{table_name}");')
-            columns_info = src_cur.fetchall()
-            col_names = [c["name"] for c in columns_info]
-            pk_col = next((c["name"] for c in columns_info if c["pk"] == 1), None)
+            if is_json:
+                rows = json_source_data.get(table_name, [])
+                col_names = list(rows[0].keys()) if rows else []
+                pk_col = "id" if "id" in col_names else ("version_num" if table_name == "alembic_version" else None)
+            else:
+                src_cur.execute(f'PRAGMA table_info("{table_name}");')
+                columns_info = src_cur.fetchall()
+                col_names = [c["name"] for c in columns_info]
+                pk_col = next((c["name"] for c in columns_info if c["pk"] == 1), None)
 
-            src_cur.execute(f'SELECT * FROM "{table_name}";')
-            rows = src_cur.fetchall()
+                src_cur.execute(f'SELECT * FROM "{table_name}";')
+                rows = src_cur.fetchall()
 
             with target_engine.begin() as conn:
                 # Check existing records in destination
@@ -282,15 +302,19 @@ def migrate_data(source_path: str, target_url: str, dry_run: bool = False) -> Di
         report["error"] = str(e)
         raise
     finally:
-        src_conn.close()
+        if src_conn:
+            src_conn.close()
         target_engine.dispose()
 
     return report
 
 
 def main():
+    default_src = os.path.join(backend_dir, "greenwave.db")
+    if not os.path.exists(default_src):
+        default_src = os.path.join(backend_dir, "app", "db", "initial_data.json")
     parser = argparse.ArgumentParser(description="Migrate GreenWave SQLite database to PostgreSQL (Neon)")
-    parser.add_argument("--source", default=os.path.join(backend_dir, "greenwave.db"), help="Source SQLite DB path")
+    parser.add_argument("--source", default=default_src, help="Source SQLite DB or JSON path")
     parser.add_argument("--target", default=None, help="Target PostgreSQL connection string (defaults to POSTGRES_URL)")
     parser.add_argument("--dry-run", action="store_true", help="Inspect and simulate migration without committing")
     args = parser.parse_args()
