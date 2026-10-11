@@ -99,6 +99,30 @@ def find_migration_source() -> Optional[str]:
                         return p
     return None
 
+def sync_postgres_sequences(conn):
+    """Ensure all PostgreSQL sequences match MAX(id) for each table."""
+    try:
+        from sqlalchemy import text
+        conn.execute(text("""
+            DO $$
+            DECLARE
+                r RECORD;
+            BEGIN
+                FOR r IN (
+                    SELECT c.relname AS table_name, a.attname AS column_name, s.relname AS seq_name
+                    FROM pg_class c
+                    JOIN pg_attribute a ON a.attrelid = c.oid
+                    JOIN pg_depend d ON d.refobjid = c.oid AND d.refobjsubid = a.attnum
+                    JOIN pg_class s ON s.oid = d.objid
+                    WHERE c.relkind = 'r' AND s.relkind = 'S'
+                ) LOOP
+                    EXECUTE format('SELECT setval(%L, COALESCE((SELECT MAX(%I) FROM %I), 1))', r.seq_name, r.column_name, r.table_name);
+                END LOOP;
+            END $$;
+        """))
+    except Exception as e:
+        pass
+
 def ensure_database_schema(db_engine):
     """Ensure required database schema and initial data exist in PostgreSQL."""
     if not settings.SQLALCHEMY_DATABASE_URI or settings.DATABASE_CONFIG_ERROR:
@@ -116,6 +140,8 @@ def ensure_database_schema(db_engine):
                 user_count = conn.execute(text("SELECT count(*) FROM users")).scalar()
                 state_count = conn.execute(text("SELECT count(*) FROM states")).scalar()
                 if user_count and user_count > 0 and state_count and state_count > 0:
+                    if "postgres" in settings.SQLALCHEMY_DATABASE_URI.lower():
+                        sync_postgres_sequences(conn)
                     return
     except Exception as e:
         log_sanitized_db_error("schema inspection", e)
