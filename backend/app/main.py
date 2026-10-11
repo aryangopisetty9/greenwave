@@ -306,6 +306,10 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         if not district:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state/district combination")
             
+        d_name = district.name
+        state = db.query(State).filter(State.id == signup_data.state_id).first()
+        s_name = state.name if state else None
+
         from sqlalchemy import func
         from app.models.domain import UserScope
         
@@ -340,8 +344,6 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
         except Exception as scope_err:
             db.rollback()
             log_sanitized_db_error("registration scope creation", scope_err)
-        d_name = district.name if (district and isinstance(getattr(district, "name", None), str)) else None
-        s_name = district.state.name if (district and hasattr(district, "state") and district.state and isinstance(getattr(district.state, "name", None), str)) else None
         
         badge = f"IPS-{int(user_id):04d}-TRF" if isinstance(user_id, (int, float)) else "GW-001"
         return UserResponse(
@@ -361,9 +363,13 @@ def signup(signup_data: SignupSchema, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         log_sanitized_db_error("registration", e)
+        orig = getattr(e, "orig", e)
+        sqlstate = getattr(orig, "sqlstate", getattr(orig, "pgcode", "UNKNOWN"))
+        diag = getattr(orig, "diag", None)
+        table_name = getattr(diag, "table_name", None) if diag else None
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database service temporarily unavailable. Please verify backend database configuration."
+            detail=f"Database service temporarily unavailable: {type(e).__name__} [SQLSTATE={sqlstate}, table={table_name or 'N/A'}]"
         )
 
 @app.post(f"{settings.API_V1_STR}/auth/logout")
